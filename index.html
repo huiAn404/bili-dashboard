@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B站UP主数据看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: #f5f6fa; color: #2d3436; min-height: 100vh;
+}
+.header {
+    background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%);
+    padding: 18px 28px; color: white;
+    display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 12px rgba(108,92,231,0.3);
+    flex-wrap: wrap; gap: 10px;
+}
+.header h1 { font-size: 22px; font-weight: 700; }
+.header .stats { display: flex; gap: 20px; flex-wrap: wrap; }
+.header .stat-item { text-align: center; background: rgba(255,255,255,0.15); padding: 8px 16px; border-radius: 10px; }
+.header .stat-value { font-size: 20px; font-weight: 700; }
+.header .stat-label { font-size: 11px; opacity: 0.85; margin-top: 2px; }
+.auto-refresh { font-size: 11px; opacity: 0.8; margin-top: 4px; }
+.container { max-width: 1600px; margin: 0 auto; padding: 16px; }
+.filter-panel {
+    background: white; border-radius: 12px; padding: 18px 20px;
+    margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.filter-panel h3 { font-size: 13px; color: #636e72; margin-bottom: 10px; font-weight: 600; }
+.filter-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+    gap: 10px;
+}
+.filter-group { }
+.filter-group label {
+    display: block; font-size: 11px; color: #888; margin-bottom: 3px; font-weight: 500;
+}
+.filter-group input, .filter-group select {
+    width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px;
+    background: #fafafa; font-size: 12px; color: #333;
+}
+.filter-group input:focus, .filter-group select:focus {
+    border-color: #6c5ce7; outline: none; background: #fff;
+    box-shadow: 0 0 0 3px rgba(108,92,231,0.1);
+}
+.range-group {
+    display: flex; gap: 6px; align-items: center;
+}
+.range-group input { width: calc(50% - 10px); }
+.range-group span { font-size: 11px; color: #999; flex-shrink: 0; }
+.filter-actions {
+    grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap;
+}
+.btn {
+    padding: 7px 18px; border: none; border-radius: 6px; font-size: 12px;
+    cursor: pointer; font-weight: 600; transition: all 0.15s;
+}
+.btn-primary { background: #6c5ce7; color: white; }
+.btn-primary:hover { background: #5b4cdb; }
+.btn-secondary { background: #dfe6e9; color: #636e72; }
+.btn-secondary:hover { background: #b2bec3; color: white; }
+.btn-outline { background: white; color: #6c5ce7; border: 1px solid #6c5ce7; }
+.btn-outline:hover { background: #f0edff; }
+.preset-tags {
+    grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px;
+}
+.preset-tag {
+    padding: 3px 10px; border-radius: 12px; font-size: 11px;
+    background: #f0edff; color: #6c5ce7; cursor: pointer;
+    border: 1px solid transparent; transition: all 0.15s;
+}
+.preset-tag:hover { background: #6c5ce7; color: white; }
+.preset-tag.active { background: #6c5ce7; color: white; }
+.table-container {
+    background: white; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.table-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid #eee;
+    flex-wrap: wrap; gap: 8px;
+}
+.table-header h3 { font-size: 13px; color: #333; }
+.result-info { font-size: 11px; color: #999; }
+.table-wrapper { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th {
+    padding: 10px 12px; text-align: left; font-size: 11px;
+    color: #888; font-weight: 600; background: #f8f9fa;
+    cursor: pointer; user-select: none; white-space: nowrap;
+    border-bottom: 2px solid #e9ecef;
+}
+th:hover { color: #6c5ce7; }
+th .sort-icon { margin-left: 3px; font-size: 10px; }
+td {
+    padding: 8px 12px; font-size: 12px; border-bottom: 1px solid #f1f3f4;
+    white-space: nowrap;
+}
+tr:hover td { background: #f8f6ff; }
+tr:nth-child(even) td { background: #fafbfc; }
+tr:nth-child(even):hover td { background: #f8f6ff; }
+.gain-positive { color: #e74c3c; font-weight: 600; }
+.gain-negative { color: #27ae60; font-weight: 600; }
+.gain-zero { color: #999; }
+.name-link { color: #6c5ce7; text-decoration: none; font-weight: 500; cursor: pointer; }
+.name-link:hover { text-decoration: underline; }
+.follower-num { font-variant-numeric: tabular-nums; }
+.badge {
+    display: inline-block; padding: 1px 6px; border-radius: 8px;
+    font-size: 10px; font-weight: 600;
+}
+.badge-live { background: #ffeaa7; color: #d68910; }
+.badge-new { background: #dfe6e9; color: #636e72; }
+.tooltip-cell { position: relative; cursor: help; }
+.tooltip-cell:hover .tooltip-text { display: block; }
+.tooltip-text {
+    display: none; position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%); background: #333; color: white;
+    padding: 4px 8px; border-radius: 4px; font-size: 10px;
+    white-space: nowrap; z-index: 10;
+}
+.pagination {
+    display: flex; justify-content: center; align-items: center;
+    gap: 6px; padding: 14px; border-top: 1px solid #f1f3f4; flex-wrap: wrap;
+}
+.pagination button {
+    padding: 5px 12px; border: 1px solid #ddd; border-radius: 4px;
+    background: white; color: #555; cursor: pointer; font-size: 11px;
+}
+.pagination button:hover { background: #6c5ce7; color: white; border-color: #6c5ce7; }
+.pagination button:disabled { opacity: 0.35; cursor: not-allowed; }
+.pagination .current { font-size: 12px; color: #6c5ce7; font-weight: 600; padding: 0 8px; }
+.modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5); z-index: 100;
+    justify-content: center; align-items: center;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+    background: white; border-radius: 16px; padding: 24px;
+    max-width: 800px; width: 92%; max-height: 85vh; overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+}
+.modal h2 { font-size: 18px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.modal .close-btn {
+    float: right; background: none; border: none; color: #999; font-size: 24px;
+    cursor: pointer; line-height: 1;
+}
+.modal .close-btn:hover { color: #333; }
+.modal .up-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+.modal .up-stats .stat-card {
+    background: #f8f9fa; padding: 12px; border-radius: 8px; text-align: center;
+}
+.modal .up-stats .stat-value { font-size: 20px; font-weight: 700; color: #6c5ce7; }
+.modal .up-stats .stat-label { font-size: 10px; color: #888; margin-top: 2px; }
+.chart-container { height: 320px; position: relative; }
+.loading-screen {
+    text-align: center; padding: 100px 20px;
+    color: #999; font-size: 16px;
+}
+.loading-screen .spinner {
+    display: inline-block; width: 40px; height: 40px;
+    border: 3px solid #e0e0e0; border-top-color: #6c5ce7;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.empty-state { text-align: center; padding: 60px; color: #bbb; }
+.empty-state .icon { font-size: 40px; margin-bottom: 8px; }
+@media (max-width: 768px) {
+    .filter-grid { grid-template-columns: repeat(2, 1fr); }
+    .header .stats { gap: 8px; }
+    .header .stat-item { padding: 4px 10px; }
+    .header .stat-value { font-size: 16px; }
+    .modal .up-stats { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <div>
+        <h1>📊 B站UP主数据看板 <span style="font-size:11px;opacity:0.7;">Cloud</span></h1>
+        <div class="auto-refresh" id="dataTime">数据加载中...</div>
+    </div>
+    <div class="stats" id="headerStats">
+        <div class="stat-item">
+            <div class="stat-value" id="statPersonal">-</div>
+            <div class="stat-label">个人UP主</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="statGuard">-</div>
+            <div class="stat-label">有舰队</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="statLive">-</div>
+            <div class="stat-label">有直播</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="statHistory">-</div>
+            <div class="stat-label">有历史</div>
+        </div>
+    </div>
+</div>
+
+<div class="container" id="appContainer" style="display:none;">
+    <!-- 过滤面板 -->
+    <div class="filter-panel">
+        <h3>🔍 组合筛选</h3>
+        <div class="filter-grid">
+            <div class="filter-group">
+                <label>📅 涨粉时间跨度</label>
+                <select id="fltDaysSpan">
+                    <option value="1">1天 (昨天)</option>
+                    <option value="2">2天</option>
+                    <option value="3">3天</option>
+                    <option value="7" selected>7天</option>
+                    <option value="14">14天</option>
+                    <option value="30">30天</option>
+                    <option value="60">60天</option>
+                    <option value="90">90天</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>📈 涨粉数量范围</label>
+                <div class="range-group">
+                    <input type="number" id="fltMinChange" placeholder="最低" step="1">
+                    <span>~</span>
+                    <input type="number" id="fltMaxChange" placeholder="最高" step="1">
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>👥 当前粉丝范围</label>
+                <div class="range-group">
+                    <input type="number" id="fltMinFans" placeholder="最低">
+                    <span>~</span>
+                    <input type="number" id="fltMaxFans" placeholder="最高">
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>🚢 舰长数量范围</label>
+                <div class="range-group">
+                    <input type="number" id="fltMinCaptain" placeholder="最低">
+                    <span>~</span>
+                    <input type="number" id="fltMaxCaptain" placeholder="最高">
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>⭐ 提督数量范围</label>
+                <div class="range-group">
+                    <input type="number" id="fltMinCommander" placeholder="最低">
+                    <span>~</span>
+                    <input type="number" id="fltMaxCommander" placeholder="最高">
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>👑 总督数量范围</label>
+                <div class="range-group">
+                    <input type="number" id="fltMinGovernor" placeholder="最低">
+                    <span>~</span>
+                    <input type="number" id="fltMaxGovernor" placeholder="最高">
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>🎯 舰队总数范围</label>
+                <div class="range-group">
+                    <input type="number" id="fltMinGuardTotal" placeholder="最低">
+                    <span>~</span>
+                    <input type="number" id="fltMaxGuardTotal" placeholder="最高">
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>📺 直播间</label>
+                <select id="fltHasLive">
+                    <option value="">全部</option>
+                    <option value="yes">有直播间</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>🔎 搜索UP主</label>
+                <input type="text" id="fltSearch" placeholder="输入名称/UID...">
+            </div>
+            <div class="filter-actions">
+                <button class="btn btn-primary" onclick="applyFilter()">🔍 筛选</button>
+                <button class="btn btn-secondary" onclick="resetFilter()">🔄 重置</button>
+                <button class="btn btn-outline" onclick="exportCSV()">📥 导出CSV</button>
+            </div>
+            <div class="preset-tags">
+                <span style="color:#999;font-size:11px;line-height:24px;margin-right:6px;">快捷筛选:</span>
+                <span class="preset-tag" onclick="setPreset('blackhorse')">🎯 黑马 (7天涨>500, 粉丝<5000)</span>
+                <span class="preset-tag" onclick="setPreset('rising')">📈 快速上升 (7天涨率>10%, 粉丝>1000)</span>
+                <span class="preset-tag" onclick="setPreset('falling')">📉 掉粉 (>100)</span>
+                <span class="preset-tag" onclick="setPreset('newcomer')">🌱 新人 (粉丝<1000, 有涨粉)</span>
+                <span class="preset-tag" onclick="setPreset('bigv')">⭐ 大V (粉丝>10万, 有舰队)</span>
+                <span class="preset-tag" onclick="setPreset('streamer')">📺 主播 (有直播+舰队)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 表格 -->
+    <div class="table-container">
+        <div class="table-header">
+            <h3>📋 UP主排行</h3>
+            <div class="result-info" id="resultInfo">加载中...</div>
+        </div>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th onclick="changeSort('follower_change')" title="基于选定时间跨度的涨粉数量">📈 涨粉 <span class="sort-icon" id="sort-follower_change">▼</span></th>
+                        <th onclick="changeSort('name')">UP主 <span class="sort-icon" id="sort-name"></span></th>
+                        <th onclick="changeSort('fans')">当前粉丝 <span class="sort-icon" id="sort-fans"></span></th>
+                        <th onclick="changeSort('change_rate')">涨粉率 <span class="sort-icon" id="sort-change_rate"></span></th>
+                        <th onclick="changeSort('guard_captain')">舰长 <span class="sort-icon" id="sort-guard_captain"></span></th>
+                        <th onclick="changeSort('guard_commander')">提督 <span class="sort-icon" id="sort-guard_commander"></span></th>
+                        <th onclick="changeSort('guard_governor')">总督 <span class="sort-icon" id="sort-guard_governor"></span></th>
+                        <th onclick="changeSort('guard_total')">舰队总数 <span class="sort-icon" id="sort-guard_total"></span></th>
+                        <th onclick="changeSort('guard_max_accompany')">最长陪伴 <span class="sort-icon" id="sort-guard_max_accompany"></span></th>
+                        <th onclick="changeSort('appear_count')">出现次数 <span class="sort-icon" id="sort-appear_count"></span></th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    <tr><td colspan="10" style="text-align:center;padding:40px;">⏳ 加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+</div>
+
+<!-- 初始加载画面 -->
+<div class="loading-screen" id="loadingScreen">
+    <div class="spinner"></div>
+    <div>正在加载UP主数据...</div>
+    <div style="font-size:12px;margin-top:8px;opacity:0.6;">数据来源: 本地同步 · CloudStudio 部署</div>
+</div>
+
+<!-- UP主详情弹窗 -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <button class="close-btn" onclick="closeModal()">&times;</button>
+        <h2 id="modalTitle"></h2>
+        <div class="up-stats" id="modalStats"></div>
+        <div class="chart-container" id="chartContainer">
+            <canvas id="historyChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+// ===== 全局数据 =====
+let ALL_DATA = [];
+let META = {};
+let currentPage = 1;
+let currentSort = 'follower_change';
+let currentSortDir = 'desc';
+let historyChart = null;
+const PAGE_SIZE = 50;
+
+// ===== 预设条件 =====
+const PRESETS = {
+    blackhorse: { days_span: 7, min_change: 500, max_fans: 5000, label: '黑马UP' },
+    rising: { days_span: 7, min_fans: 1000, min_change: 1, label: '快速上升' },
+    falling: { days_span: 7, max_change: -100, label: '掉粉预警' },
+    newcomer: { days_span: 7, max_fans: 1000, min_change: 1, label: '新人UP' },
+    bigv: { days_span: 7, min_fans: 100000, min_guard_total: 1, label: '大V舰队' },
+    streamer: { days_span: 7, has_live: 'yes', min_guard_total: 1, label: '主播' },
+};
+
+// ===== 加载数据 =====
+fetch('data.json')
+    .then(r => r.json())
+    .then(data => {
+        META = data;
+        ALL_DATA = data.up_list || [];
+        document.getElementById('loadingScreen').style.display = 'none';
+        document.getElementById('appContainer').style.display = 'block';
+        updateStats();
+        fetchData();
+        document.getElementById('dataTime').textContent =
+            '数据同步时间: ' + (data.generated_at || '-').substring(0, 16) + ' | CloudStudio 部署';
+    })
+    .catch(e => {
+        document.getElementById('loadingScreen').innerHTML =
+            '<div style="font-size:40px;margin-bottom:12px;">❌</div>数据加载失败<br><span style="font-size:12px;opacity:0.6;">' +
+            e.message + '</span>';
+    });
+
+// ===== 统计面板 =====
+function updateStats() {
+    document.getElementById('statPersonal').textContent = META.total || 0;
+    document.getElementById('statGuard').textContent = META.with_guard || 0;
+    document.getElementById('statLive').textContent = META.with_live || 0;
+    document.getElementById('statHistory').textContent = META.with_history || 0;
+}
+
+// ===== 排序 =====
+function changeSort(field) {
+    if (currentSort === field) {
+        currentSortDir = currentSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        currentSort = field;
+        currentSortDir = 'desc';
+    }
+    currentPage = 1;
+    updateSortIcons();
+    fetchData();
+}
+
+function updateSortIcons() {
+    const fields = ['follower_change','name','fans','change_rate','guard_captain',
+        'guard_commander','guard_governor','guard_total','guard_max_accompany','appear_count'];
+    fields.forEach(f => {
+        const el = document.getElementById('sort-' + f);
+        if (el) el.textContent = currentSort === f ? (currentSortDir === 'desc' ? '▼' : '▲') : '';
+    });
+}
+
+// ===== 筛选逻辑 =====
+function applyFilter() {
+    currentPage = 1;
+    fetchData();
+}
+
+function resetFilter(silent) {
+    ['fltMinChange','fltMaxChange','fltMinFans','fltMaxFans',
+     'fltMinCaptain','fltMaxCaptain','fltMinCommander','fltMaxCommander',
+     'fltMinGovernor','fltMaxGovernor','fltMinGuardTotal','fltMaxGuardTotal',
+     'fltSearch'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('fltDaysSpan').value = '7';
+    document.getElementById('fltHasLive').value = '';
+    document.querySelectorAll('.preset-tag').forEach(t => t.classList.remove('active'));
+    currentPage = 1;
+    if (!silent) fetchData();
+}
+
+function setPreset(name) {
+    resetFilter(true);
+    const p = PRESETS[name];
+    if (p.days_span) document.getElementById('fltDaysSpan').value = p.days_span;
+    if (p.min_change) document.getElementById('fltMinChange').value = p.min_change;
+    if (p.max_change !== undefined && p.max_change !== '') document.getElementById('fltMaxChange').value = p.max_change;
+    if (p.min_fans) document.getElementById('fltMinFans').value = p.min_fans;
+    if (p.max_fans) document.getElementById('fltMaxFans').value = p.max_fans;
+    if (p.min_guard_total) document.getElementById('fltMinGuardTotal').value = p.min_guard_total;
+    if (p.has_live) document.getElementById('fltHasLive').value = p.has_live;
+    document.querySelectorAll('.preset-tag').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    applyFilter();
+}
+
+function getFilters() {
+    const daysSpan = parseInt(document.getElementById('fltDaysSpan').value) || 7;
+    const f = {
+        daysSpan: daysSpan,
+        minChange: pInt('fltMinChange'),
+        maxChange: pInt('fltMaxChange'),
+        minFans: pInt('fltMinFans'),
+        maxFans: pInt('fltMaxFans'),
+        minCaptain: pInt('fltMinCaptain'),
+        maxCaptain: pInt('fltMaxCaptain'),
+        minCommander: pInt('fltMinCommander'),
+        maxCommander: pInt('fltMaxCommander'),
+        minGovernor: pInt('fltMinGovernor'),
+        maxGovernor: pInt('fltMaxGovernor'),
+        minGuardTotal: pInt('fltMinGuardTotal'),
+        maxGuardTotal: pInt('fltMaxGuardTotal'),
+        hasLive: document.getElementById('fltHasLive').value,
+        search: (document.getElementById('fltSearch').value || '').trim().toLowerCase(),
+    };
+    return f;
+}
+
+function pInt(id) {
+    const v = document.getElementById(id).value;
+    if (v === '' || v === null || v === undefined) return null;
+    const n = parseInt(v);
+    return isNaN(n) ? null : n;
+}
+
+// ===== 数据过滤与排序 =====
+function fetchData() {
+    const f = getFilters();
+    const ds = f.daysSpan.toString();
+
+    // 过滤
+    let rows = [];
+    for (const up of ALL_DATA) {
+        // 搜索
+        if (f.search) {
+            if (!up.name.toLowerCase().includes(f.search) &&
+                !up.uid.includes(f.search)) continue;
+        }
+
+        // 粉丝范围
+        if (f.minFans !== null && up.fans < f.minFans) continue;
+        if (f.maxFans !== null && up.fans > f.maxFans) continue;
+
+        // 直播间
+        if (f.hasLive === 'yes' && !up.has_live_room) continue;
+
+        // 舰队过滤
+        if (f.minCaptain !== null && up.guard_captain < f.minCaptain) continue;
+        if (f.maxCaptain !== null && up.guard_captain > f.maxCaptain) continue;
+        if (f.minCommander !== null && up.guard_commander < f.minCommander) continue;
+        if (f.maxCommander !== null && up.guard_commander > f.maxCommander) continue;
+        if (f.minGovernor !== null && up.guard_governor < f.minGovernor) continue;
+        if (f.maxGovernor !== null && up.guard_governor > f.maxGovernor) continue;
+        if (f.minGuardTotal !== null && up.guard_total < f.minGuardTotal) continue;
+        if (f.maxGuardTotal !== null && up.guard_total > f.maxGuardTotal) continue;
+
+        // 涨粉数据
+        const ch = (up.changes || {})[ds];
+        const chg = ch ? ch.change : 0;
+        const rate = ch ? ch.rate : 0;
+        const histFans = ch ? ch.fans : 0;
+
+        // 涨粉过滤
+        if (f.minChange !== null && chg < f.minChange) continue;
+        if (f.maxChange !== null && chg > f.maxChange) continue;
+
+        rows.push({
+            uid: up.uid,
+            name: up.name,
+            fans: up.fans,
+            sign: up.sign || '',
+            room_id: up.room_id,
+            has_live_room: up.has_live_room,
+            guard_total: up.guard_total,
+            guard_captain: up.guard_captain,
+            guard_commander: up.guard_commander,
+            guard_governor: up.guard_governor,
+            guard_max_accompany: up.guard_max_accompany,
+            appear_count: up.appear_count,
+            has_history: up.has_history,
+            follower_change: chg,
+            change_rate: rate,
+            hist_fans: histFans,
+            snapshots: up.snapshots || [],
+        });
+    }
+
+    // 排序
+    rows.sort((a, b) => {
+        let va, vb;
+        switch (currentSort) {
+            case 'follower_change': va = a.follower_change; vb = b.follower_change; break;
+            case 'name': va = a.name; vb = b.name; return currentSortDir === 'desc'
+                ? vb.localeCompare(va, 'zh') : va.localeCompare(vb, 'zh');
+            case 'fans': va = a.fans; vb = b.fans; break;
+            case 'change_rate': va = a.change_rate; vb = b.change_rate; break;
+            case 'guard_captain': va = a.guard_captain; vb = b.guard_captain; break;
+            case 'guard_commander': va = a.guard_commander; vb = b.guard_commander; break;
+            case 'guard_governor': va = a.guard_governor; vb = b.guard_governor; break;
+            case 'guard_total': va = a.guard_total; vb = b.guard_total; break;
+            case 'guard_max_accompany': va = a.guard_max_accompany; vb = b.guard_max_accompany; break;
+            case 'appear_count': va = a.appear_count; vb = b.appear_count; break;
+            default: va = a.follower_change; vb = b.follower_change;
+        }
+        return currentSortDir === 'desc' ? vb - va : va - vb;
+    });
+
+    // 分页
+    const total = rows.length;
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const pageRows = rows.slice(start, start + PAGE_SIZE);
+
+    renderTable(pageRows);
+    updatePagination(total);
+    updateSortIcons();
+    document.getElementById('resultInfo').textContent =
+        '共 ' + total + ' 条 | 数据: ' + (META.generated_at || '-').substring(0, 10);
+}
+
+// ===== 表格渲染 =====
+function renderTable(rows) {
+    const tbody = document.getElementById('tableBody');
+    if (!rows || rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><div class="icon">📭</div>无匹配数据，调整筛选条件试试</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(row => {
+        const gClass = row.follower_change > 0 ? 'gain-positive' : (row.follower_change < 0 ? 'gain-negative' : 'gain-zero');
+        const gPrefix = row.follower_change > 0 ? '+' : '';
+        const hasHist = row.has_history && row.hist_fans > 0;
+        const liveBadge = row.has_live_room
+            ? '<span class="badge badge-live" title="直播间: ' + row.room_id + '">📺直播</span>'
+            : '';
+        const guardInfo = row.guard_total > 0
+            ? '舰队' + row.guard_total + ' | 舰长' + row.guard_captain : '无舰队';
+        return '<tr>' +
+            '<td><span class="' + gClass + '">' + gPrefix + fmtNum(row.follower_change) + '</span>' +
+            (hasHist ? '' : ' <span class="badge badge-new">新</span>') + '</td>' +
+            '<td>' +
+                '<a class="name-link" onclick="showDetail(\'' + row.uid + '\')">' +
+                escHtml(row.name) + '</a> ' + liveBadge +
+                '<br><span style="font-size:10px;color:#999;">' + (row.sign || '').substring(0, 30) + '</span>' +
+            '</td>' +
+            '<td><span class="follower-num">' + fmtNum(row.fans) + '</span></td>' +
+            '<td>' + (hasHist ? (gPrefix + row.change_rate + '%') : '<span style="color:#ccc">N/A</span>') + '</td>' +
+            '<td>' + fmtNum(row.guard_captain) + '</td>' +
+            '<td>' + fmtNum(row.guard_commander) + '</td>' +
+            '<td>' + fmtNum(row.guard_governor) + '</td>' +
+            '<td><span class="tooltip-cell">' + fmtNum(row.guard_total) +
+            '<span class="tooltip-text">' + guardInfo + '</span></span></td>' +
+            '<td>' + (row.guard_max_accompany || '-') + '天</td>' +
+            '<td>' + row.appear_count + '</td>' +
+            '</tr>';
+    }).join('');
+}
+
+function updatePagination(total) {
+    const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+    const div = document.getElementById('pagination');
+    if (totalPages <= 1) {
+        div.innerHTML = '<span style="font-size:11px;color:#999;">共 ' + total + ' 条</span>';
+        return;
+    }
+    let html = '';
+    html += '<button onclick="goPage(1)" ' + (currentPage<=1?'disabled':'') + '>首页</button>';
+    html += '<button onclick="goPage('+(currentPage-1)+')" '+(currentPage<=1?'disabled':'') + '>上一页</button>';
+    const start = Math.max(1, currentPage - 2);
+    const end = Math.min(totalPages, currentPage + 2);
+    for (let i=start; i<=end; i++) {
+        html += '<button onclick="goPage('+i+')" style="' +
+            (i===currentPage?'background:#6c5ce7;color:white;border-color:#6c5ce7;':'') + '">'+i+'</button>';
+    }
+    html += '<button onclick="goPage('+(currentPage+1)+')" '+(currentPage>=totalPages?'disabled':'')+'>下一页</button>';
+    html += '<button onclick="goPage('+totalPages+')" '+(currentPage>=totalPages?'disabled':'')+'>末页</button>';
+    div.innerHTML = html;
+}
+
+function goPage(p) { currentPage = p; fetchData(); window.scrollTo(0, 400); }
+
+// ===== UP主详情弹窗 =====
+function showDetail(uid) {
+    const up = ALL_DATA.find(u => u.uid === uid);
+    if (!up) return;
+
+    document.getElementById('modalTitle').innerHTML =
+        '<a href="https://space.bilibili.com/' + uid + '" target="_blank" style="color:#6c5ce7;">' +
+        escHtml(up.name || uid) + '</a>';
+
+    document.getElementById('modalStats').innerHTML =
+        '<div class="stat-card"><div class="stat-value">'+fmtNum(up.fans)+'</div><div class="stat-label">当前粉丝</div></div>' +
+        '<div class="stat-card"><div class="stat-value">'+fmtNum(up.guard_total)+'</div><div class="stat-label">舰队总数</div></div>' +
+        '<div class="stat-card"><div class="stat-value">'+fmtNum(up.guard_captain)+'</div><div class="stat-label">舰长</div></div>' +
+        '<div class="stat-card"><div class="stat-value">'+(up.snapshots?up.snapshots.length:0)+'</div><div class="stat-label">历史快照</div></div>';
+
+    document.getElementById('modalOverlay').classList.add('active');
+
+    // 渲染图表
+    setTimeout(() => {
+        if (historyChart) historyChart.destroy();
+        const container = document.getElementById('chartContainer');
+        container.innerHTML = '<canvas id="historyChart"></canvas>';
+        const ctx = document.getElementById('historyChart').getContext('2d');
+
+        const snaps = up.snapshots || [];
+        if (snaps.length > 0) {
+            historyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: snaps.map(s => s.date),
+                    datasets: [{
+                        label: '粉丝数',
+                        data: snaps.map(s => s.fans),
+                        borderColor: '#6c5ce7',
+                        backgroundColor: 'rgba(108,92,231,0.08)',
+                        fill: true, tension: 0.3, pointRadius: 2,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { usePointStyle: true } } },
+                    scales: {
+                        x: { ticks: { maxTicksLimit: 20 }, grid: { display: false } },
+                        y: { ticks: { callback: v => fmtNum(v) }, grid: { color: '#f0f0f0' } }
+                    }
+                }
+            });
+        } else {
+            container.innerHTML = '<div style="text-align:center;padding-top:100px;color:#ccc;">暂无历史数据</div>';
+        }
+    }, 150);
+}
+
+function closeModal(e) {
+    if (e && e.target !== document.getElementById('modalOverlay')) return;
+    document.getElementById('modalOverlay').classList.remove('active');
+}
+
+// ===== CSV 导出 =====
+function exportCSV() {
+    const f = getFilters();
+    const ds = f.daysSpan.toString();
+    let rows = [];
+    for (const up of ALL_DATA) {
+        if (f.minFans !== null && up.fans < f.minFans) continue;
+        if (f.maxFans !== null && up.fans > f.maxFans) continue;
+        if (f.hasLive === 'yes' && !up.has_live_room) continue;
+        const ch = (up.changes || {})[ds];
+
+        rows.push([
+            up.uid, up.name, up.fans,
+            ch ? ch.change : 0, ch ? ch.rate : 0,
+            up.guard_total, up.guard_captain, up.guard_commander, up.guard_governor,
+            up.guard_max_accompany, up.has_live_room ? '是' : '否', up.appear_count
+        ]);
+    }
+    const header = ['UID','名称','粉丝','涨粉','涨粉率%','舰队总数','舰长','提督','总督','最长陪伴天','有直播','出现次数'];
+    const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], {type: 'text/csv;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'bili_up_' + new Date().toISOString().substring(0,10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// ===== 工具函数 =====
+function fmtNum(n) {
+    if (n === null || n === undefined) return '-';
+    if (Math.abs(n) >= 100000000) return (n/100000000).toFixed(2) + '亿';
+    if (Math.abs(n) >= 10000) return (n/10000).toFixed(2) + '万';
+    return n.toLocaleString();
+}
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>
