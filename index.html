@@ -191,6 +191,10 @@ tr:nth-child(even):hover td { background: #f8f6ff; }
             <div class="stat-value" id="statPersonal">-</div>
             <div class="stat-label">个人UP主</div>
         </div>
+        <div class="stat-item" style="background:rgba(255,255,255,0.25);">
+            <div class="stat-value" id="statNew">-</div>
+            <div class="stat-label">🆕 今日新增</div>
+        </div>
         <div class="stat-item">
             <div class="stat-value" id="statGuard">-</div>
             <div class="stat-label">有舰队</div>
@@ -211,18 +215,30 @@ tr:nth-child(even):hover td { background: #f8f6ff; }
     <div class="filter-panel">
         <h3>🔍 组合筛选</h3>
         <div class="filter-grid">
-            <div class="filter-group">
-                <label>📅 涨粉时间跨度</label>
-                <select id="fltDaysSpan">
-                    <option value="1">1天 (昨天)</option>
-                    <option value="2">2天</option>
-                    <option value="3">3天</option>
-                    <option value="7" selected>7天</option>
-                    <option value="14">14天</option>
-                    <option value="30">30天</option>
-                    <option value="60">60天</option>
-                    <option value="90">90天</option>
-                </select>
+            <div class="filter-group" style="grid-column: span 2;">
+                <label>📅 涨粉时间跨度（可输入任意天数）</label>
+                <input type="number" id="fltDaysSpan" value="7" min="1" max="365" placeholder="输入天数" oninput="clearDaysActive()">
+                <div class="days-quick" style="display:flex; gap:5px; flex-wrap:wrap; margin-top:5px;">
+                    <span class="preset-tag" onclick="setDays(1, event)">昨天</span>
+                    <span class="preset-tag" onclick="setDays(2, event)">2天</span>
+                    <span class="preset-tag" onclick="setDays(3, event)">3天</span>
+                    <span class="preset-tag" onclick="setDays(7, event)">7天</span>
+                    <span class="preset-tag" onclick="setDays(15, event)">15天</span>
+                    <span class="preset-tag" onclick="setDays(30, event)">30天</span>
+                </div>
+            </div>
+            <div class="filter-group" style="grid-column: span 2;">
+                <label>🗓️ 基准日期（每天显示不同数据）</label>
+                <div class="range-group">
+                    <input type="date" id="fltBaseDate" style="flex:1;" onchange="onBaseDateChange()">
+                    <select id="fltDateMode" style="flex:1;" onchange="onDateModeChange()">
+                        <option value="relative">📈 相对涨粉：从基准日到今天</option>
+                        <option value="snapshot">📅 历史当日：只看基准日当天</option>
+                    </select>
+                </div>
+                <div style="font-size:11px;color:#888;margin-top:4px;">
+                    选择任意历史日期，榜单会按那天的数据重新计算；留空则默认最新数据
+                </div>
             </div>
             <div class="filter-group">
                 <label>📈 涨粉数量范围</label>
@@ -290,6 +306,7 @@ tr:nth-child(even):hover td { background: #f8f6ff; }
             </div>
             <div class="preset-tags">
                 <span style="color:#999;font-size:11px;line-height:24px;margin-right:6px;">快捷筛选:</span>
+                <span class="preset-tag" onclick="setPreset('newtoday')">🆕 今日新增</span>
                 <span class="preset-tag" onclick="setPreset('blackhorse')">🎯 黑马 (7天涨>500, 粉丝<5000)</span>
                 <span class="preset-tag" onclick="setPreset('rising')">📈 快速上升 (7天涨率>10%, 粉丝>1000)</span>
                 <span class="preset-tag" onclick="setPreset('falling')">📉 掉粉 (>100)</span>
@@ -360,8 +377,17 @@ let currentSortDir = 'desc';
 let historyChart = null;
 const PAGE_SIZE = 50;
 
+// 日期视图状态
+let currentBaseDate = null;  // null 表示最新日期
+let currentDateMode = 'relative'; // 'relative' | 'snapshot'
+
+function getTodayStr() {
+    return (META.generated_at || new Date().toISOString()).substring(0, 10);
+}
+
 // ===== 预设条件 =====
 const PRESETS = {
+    newtoday: { days_span: 1, only_new: true, label: '今日新增' },
     blackhorse: { days_span: 7, min_change: 500, max_fans: 5000, label: '黑马UP' },
     rising: { days_span: 7, min_fans: 1000, min_change: 1, label: '快速上升' },
     falling: { days_span: 7, max_change: -100, label: '掉粉预警' },
@@ -371,13 +397,17 @@ const PRESETS = {
 };
 
 // ===== 加载数据 =====
-fetch('data.json')
+fetch('data.json?t=' + new Date().toISOString().split('T')[0])
     .then(r => r.json())
     .then(data => {
         META = data;
         ALL_DATA = data.up_list || [];
         document.getElementById('loadingScreen').style.display = 'none';
         document.getElementById('appContainer').style.display = 'block';
+        currentBaseDate = getTodayStr();
+        document.getElementById('fltBaseDate').value = currentBaseDate;
+        document.getElementById('fltDateMode').value = currentDateMode;
+        updateViewLabel();
         updateStats();
         fetchData();
         document.getElementById('dataTime').textContent =
@@ -392,6 +422,7 @@ fetch('data.json')
 // ===== 统计面板 =====
 function updateStats() {
     document.getElementById('statPersonal').textContent = META.total || 0;
+    document.getElementById('statNew').textContent = META.new_today || 0;
     document.getElementById('statGuard').textContent = META.with_guard || 0;
     document.getElementById('statLive').textContent = META.with_live || 0;
     document.getElementById('statHistory').textContent = META.with_history || 0;
@@ -432,15 +463,23 @@ function resetFilter(silent) {
      'fltSearch'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('fltDaysSpan').value = '7';
     document.getElementById('fltHasLive').value = '';
+    currentBaseDate = getTodayStr();
+    currentDateMode = 'relative';
+    document.getElementById('fltBaseDate').value = currentBaseDate;
+    document.getElementById('fltDateMode').value = currentDateMode;
+    updateViewLabel();
     document.querySelectorAll('.preset-tag').forEach(t => t.classList.remove('active'));
+    window._presetOnlyNew = false;
     currentPage = 1;
     if (!silent) fetchData();
 }
 
 function setPreset(name) {
     resetFilter(true);
+    window._presetOnlyNew = false;
     const p = PRESETS[name];
     if (p.days_span) document.getElementById('fltDaysSpan').value = p.days_span;
+    if (p.only_new) window._presetOnlyNew = true;
     if (p.min_change) document.getElementById('fltMinChange').value = p.min_change;
     if (p.max_change !== undefined && p.max_change !== '') document.getElementById('fltMaxChange').value = p.max_change;
     if (p.min_fans) document.getElementById('fltMinFans').value = p.min_fans;
@@ -452,10 +491,58 @@ function setPreset(name) {
     applyFilter();
 }
 
+function setDays(n, ev) {
+    document.getElementById('fltDaysSpan').value = n;
+    document.querySelectorAll('.days-quick .preset-tag').forEach(t => t.classList.remove('active'));
+    if (ev && ev.target) ev.target.classList.add('active');
+    applyFilter();
+}
+
+function clearDaysActive() {
+    document.querySelectorAll('.days-quick .preset-tag').forEach(t => t.classList.remove('active'));
+}
+
+function onBaseDateChange() {
+    const v = document.getElementById('fltBaseDate').value;
+    currentBaseDate = v || getTodayStr();
+    // 自动切换到历史当日模式，用户可再切回相对涨粉
+    if (v && v !== getTodayStr()) {
+        // 保持当前模式，但刷新视图
+    }
+    updateViewLabel();
+    applyFilter();
+}
+
+function onDateModeChange() {
+    currentDateMode = document.getElementById('fltDateMode').value;
+    updateViewLabel();
+    applyFilter();
+}
+
+function updateViewLabel() {
+    const info = document.getElementById('resultInfo');
+    const today = getTodayStr();
+    const base = currentBaseDate || today;
+    const modeText = currentDateMode === 'snapshot' ? '历史当日' : '相对涨粉';
+    if (info) {
+        info.setAttribute('title', `当前视图: ${base} · ${modeText}`);
+    }
+    // 动态调整表头
+    const fansTh = document.querySelector('th[onclick="changeSort(\'fans\')"]');
+    if (fansTh) {
+        fansTh.innerHTML = (base === today ? '当前粉丝 ' : '当日粉丝 ') + '<span class="sort-icon" id="sort-fans"></span>';
+    }
+    const changeTh = document.querySelector('th[onclick="changeSort(\'follower_change\')"]');
+    if (changeTh) {
+        changeTh.innerHTML = (currentDateMode === 'snapshot' ? '📅 日涨跌 ' : '📈 涨粉 ') + '<span class="sort-icon" id="sort-follower_change">▼</span>';
+    }
+}
+
 function getFilters() {
     const daysSpan = parseInt(document.getElementById('fltDaysSpan').value) || 7;
     const f = {
         daysSpan: daysSpan,
+        onlyNew: window._presetOnlyNew || false,
         minChange: pInt('fltMinChange'),
         maxChange: pInt('fltMaxChange'),
         minFans: pInt('fltMinFans'),
@@ -470,6 +557,8 @@ function getFilters() {
         maxGuardTotal: pInt('fltMaxGuardTotal'),
         hasLive: document.getElementById('fltHasLive').value,
         search: (document.getElementById('fltSearch').value || '').trim().toLowerCase(),
+        baseDate: currentBaseDate || getTodayStr(),
+        dateMode: currentDateMode,
     };
     return f;
 }
@@ -479,6 +568,80 @@ function pInt(id) {
     if (v === '' || v === null || v === undefined) return null;
     const n = parseInt(v);
     return isNaN(n) ? null : n;
+}
+
+// 从历史快照实时计算指定天数的涨粉（预计算未覆盖时回退使用）
+function computeChangeFromSnapshots(up, daysAgo) {
+    return computeChangeFromSnapshotsByDate(up, null, daysAgo);
+}
+
+// 获取指定日期或之前最近一条快照
+function getSnapshotAt(up, dateStr) {
+    const snaps = up.snapshots || [];
+    if (!snaps.length || !dateStr) return null;
+    for (let i = snaps.length - 1; i >= 0; i--) {
+        if (snaps[i].date <= dateStr) return snaps[i];
+    }
+    return snaps[0];
+}
+
+// 获取指定日期之前最近一条快照（严格小于）
+function getSnapshotBefore(up, dateStr) {
+    const snaps = up.snapshots || [];
+    if (!snaps.length || !dateStr) return null;
+    for (let i = snaps.length - 1; i >= 0; i--) {
+        if (snaps[i].date < dateStr) return snaps[i];
+    }
+    return null;
+}
+
+// 基于基准日期计算涨粉（daysAgo 优先级高于 baseDate）
+function computeChangeFromSnapshotsByDate(up, baseDate, daysAgo) {
+    const snaps = up.snapshots || [];
+    if (snaps.length === 0 || !up.fans) return null;
+
+    const todayStr = getTodayStr();
+    let targetStr;
+    if (daysAgo !== undefined && daysAgo !== null) {
+        const genDate = todayStr ? new Date(todayStr) : new Date();
+        const target = new Date(genDate);
+        target.setDate(target.getDate() - daysAgo);
+        targetStr = target.toISOString().split('T')[0];
+    } else if (baseDate) {
+        targetStr = baseDate;
+    } else {
+        targetStr = todayStr;
+    }
+
+    const snap = getSnapshotAt(up, targetStr);
+    if (!snap || snap.fans === 0) return null;
+
+    const change = up.fans - snap.fans;
+    const rate = Math.round(change / snap.fans * 10000) / 100;
+    return { fans: snap.fans, change: change, rate: rate, date: snap.date };
+}
+
+// 计算历史当日数据：返回指定日期的粉丝数、相对前一天的变化
+function computeSnapshotDay(up, dateStr) {
+    const snap = getSnapshotAt(up, dateStr);
+    if (!snap) return null;
+    const prev = getSnapshotBefore(up, dateStr);
+    const change = prev ? (snap.fans - prev.fans) : 0;
+    const rate = prev && prev.fans ? (Math.round(change / prev.fans * 10000) / 100) : 0;
+    return {
+        fans: snap.fans,
+        change: change,
+        rate: rate,
+        date: snap.date,
+        prev_date: prev ? prev.date : null,
+        prev_fans: prev ? prev.fans : null
+    };
+}
+
+// 日期差（base -> today 的天数）
+function daysBetween(start, end) {
+    const a = new Date(start), b = new Date(end);
+    return Math.round((b - a) / (1000 * 60 * 60 * 24));
 }
 
 // ===== 数据过滤与排序 =====
@@ -495,9 +658,8 @@ function fetchData() {
                 !up.uid.includes(f.search)) continue;
         }
 
-        // 粉丝范围
-        if (f.minFans !== null && up.fans < f.minFans) continue;
-        if (f.maxFans !== null && up.fans > f.maxFans) continue;
+        // 今日新增
+        if (f.onlyNew && !up.is_new) continue;
 
         // 直播间
         if (f.hasLive === 'yes' && !up.has_live_room) continue;
@@ -512,11 +674,34 @@ function fetchData() {
         if (f.minGuardTotal !== null && up.guard_total < f.minGuardTotal) continue;
         if (f.maxGuardTotal !== null && up.guard_total > f.maxGuardTotal) continue;
 
-        // 涨粉数据
-        const ch = (up.changes || {})[ds];
-        const chg = ch ? ch.change : 0;
-        const rate = ch ? ch.rate : 0;
-        const histFans = ch ? ch.fans : 0;
+        // 按日期/模式计算粉丝与涨粉
+        const todayStr = getTodayStr();
+        let ch, displayFans;
+        if (f.dateMode === 'snapshot') {
+            // 历史当日模式：显示基准日期的粉丝和日涨跌
+            ch = computeSnapshotDay(up, f.baseDate);
+            displayFans = ch ? ch.fans : up.fans;
+        } else {
+            // 相对涨粉模式：从基准日期到今日
+            if (f.baseDate && f.baseDate !== todayStr) {
+                ch = computeChangeFromSnapshotsByDate(up, f.baseDate, null);
+                displayFans = up.fans;
+            } else {
+                ch = (up.changes || {})[ds];
+                if (!ch) ch = computeChangeFromSnapshots(up, f.daysSpan);
+                displayFans = up.fans;
+            }
+        }
+
+        if (!ch) continue; // 无历史数据时跳过，保证“每一天显示不同数据”只显示有数据的UP主
+
+        const chg = ch.change;
+        const rate = ch.rate;
+        const histFans = ch.fans;
+
+        // 粉丝范围（按当前显示的粉丝数过滤）
+        if (f.minFans !== null && displayFans < f.minFans) continue;
+        if (f.maxFans !== null && displayFans > f.maxFans) continue;
 
         // 涨粉过滤
         if (f.minChange !== null && chg < f.minChange) continue;
@@ -525,7 +710,8 @@ function fetchData() {
         rows.push({
             uid: up.uid,
             name: up.name,
-            fans: up.fans,
+            fans: displayFans,
+            live_fans: up.fans,
             sign: up.sign || '',
             room_id: up.room_id,
             has_live_room: up.has_live_room,
@@ -536,10 +722,13 @@ function fetchData() {
             guard_max_accompany: up.guard_max_accompany,
             appear_count: up.appear_count,
             has_history: up.has_history,
+            is_new: up.is_new || false,
             follower_change: chg,
             change_rate: rate,
             hist_fans: histFans,
             snapshots: up.snapshots || [],
+            base_date: f.baseDate,
+            date_mode: f.dateMode,
         });
     }
 
@@ -571,8 +760,11 @@ function fetchData() {
     renderTable(pageRows);
     updatePagination(total);
     updateSortIcons();
+    const viewLabel = f.dateMode === 'snapshot'
+        ? `📅 历史当日: ${f.baseDate}`
+        : (f.baseDate && f.baseDate !== getTodayStr() ? `📈 ${f.baseDate} → ${getTodayStr()} 相对涨粉` : `📈 相对涨粉`);
     document.getElementById('resultInfo').textContent =
-        '共 ' + total + ' 条 | 数据: ' + (META.generated_at || '-').substring(0, 10);
+        '共 ' + total + ' 条 | ' + viewLabel + ' | 数据: ' + (META.generated_at || '-').substring(0, 10);
 }
 
 // ===== 表格渲染 =====
@@ -591,16 +783,24 @@ function renderTable(rows) {
             : '';
         const guardInfo = row.guard_total > 0
             ? '舰队' + row.guard_total + ' | 舰长' + row.guard_captain : '无舰队';
+        const isSnapshotMode = row.date_mode === 'snapshot';
+        const fansTooltip = isSnapshotMode
+            ? `基准日期: ${row.base_date}\n当日粉丝: ${fmtNum(row.fans)}\n最新粉丝: ${fmtNum(row.live_fans || row.fans)}`
+            : `最新粉丝: ${fmtNum(row.live_fans || row.fans)}`;
+        const rateTooltip = isSnapshotMode && row.hist_fans
+            ? `相对 ${row.base_date} 前一条有数据日期的变化`
+            : `相对 ${row.base_date || 'N天前'} 的涨粉率`;
         return '<tr>' +
-            '<td><span class="' + gClass + '">' + gPrefix + fmtNum(row.follower_change) + '</span>' +
-            (hasHist ? '' : ' <span class="badge badge-new">新</span>') + '</td>' +
+            '<td><span class="' + gClass + '" title="' + rateTooltip + '">' + gPrefix + fmtNum(row.follower_change) + '</span>' +
+            (row.is_new ? ' <span class="badge badge-new" style="background:#ffeaa7;color:#d68910;">🆕</span>' : '') + '</td>' +
             '<td>' +
                 '<a class="name-link" onclick="showDetail(\'' + row.uid + '\')">' +
                 escHtml(row.name) + '</a> ' + liveBadge +
                 '<br><span style="font-size:10px;color:#999;">' + (row.sign || '').substring(0, 30) + '</span>' +
             '</td>' +
-            '<td><span class="follower-num">' + fmtNum(row.fans) + '</span></td>' +
-            '<td>' + (hasHist ? (gPrefix + row.change_rate + '%') : '<span style="color:#ccc">N/A</span>') + '</td>' +
+            '<td><span class="follower-num tooltip-cell" title="' + fansTooltip + '">' + fmtNum(row.fans) +
+            '<span class="tooltip-text" style="max-width:220px;">' + fansTooltip.replace(/\\n/g, '<br>') + '</span></span></td>' +
+            '<td><span title="' + rateTooltip + '">' + (hasHist ? (gPrefix + row.change_rate + '%') : '<span style="color:#ccc">N/A</span>') + '</span></td>' +
             '<td>' + fmtNum(row.guard_captain) + '</td>' +
             '<td>' + fmtNum(row.guard_commander) + '</td>' +
             '<td>' + fmtNum(row.guard_governor) + '</td>' +
@@ -702,7 +902,8 @@ function exportCSV() {
         if (f.minFans !== null && up.fans < f.minFans) continue;
         if (f.maxFans !== null && up.fans > f.maxFans) continue;
         if (f.hasLive === 'yes' && !up.has_live_room) continue;
-        const ch = (up.changes || {})[ds];
+        let ch = (up.changes || {})[ds];
+        if (!ch) ch = computeChangeFromSnapshots(up, f.daysSpan);
 
         rows.push([
             up.uid, up.name, up.fans,
