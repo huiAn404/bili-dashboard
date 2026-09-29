@@ -351,7 +351,7 @@ tr:nth-child(even):hover td { background: #f8f6ff; }
 <!-- 初始加载画面 -->
 <div class="loading-screen" id="loadingScreen">
     <div class="spinner"></div>
-    <div>正在加载UP主数据...</div>
+    <div id="loadMsg">正在加载UP主数据...</div>
     <div style="font-size:12px;margin-top:8px;opacity:0.6;">数据来源: 本地同步 · CloudStudio 部署</div>
 </div>
 
@@ -396,28 +396,116 @@ const PRESETS = {
     streamer: { days_span: 7, has_live: 'yes', min_guard_total: 1, label: '主播' },
 };
 
-// ===== 加载数据 =====
-fetch('data.json?t=' + new Date().toISOString().split('T')[0])
-    .then(r => r.json())
-    .then(data => {
+// ===== IndexedDB 版本化缓存（同版本数据秒开，仅数据更新当天需全量下载） =====
+const IDB_NAME = 'bili_dash', IDB_STORE = 'cache';
+function idbOpen() {
+    return new Promise((res, rej) => {
+        const r = indexedDB.open(IDB_NAME, 1);
+        r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE);
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+    });
+}
+function idbGet(key) {
+    return idbOpen().then(db => new Promise((res, rej) => {
+        const t = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key);
+        t.onsuccess = () => res(t.result); t.onerror = () => rej(t.error);
+    })).catch(() => null);
+}
+function idbPut(key, val) {
+    return idbOpen().then(db => new Promise((res, rej) => {
+        const t = db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put(val, key);
+        t.onsuccess = () => res(); t.onerror = () => rej(t.error);
+    })).catch(() => {});
+}
+
+// ===== v2 紧凑格式解码: snap=[起始索引,结束索引,粉丝数组,缺口偏移?] + 全局 snap_dates → 还原 snapshots =====
+function decodeUpList(data) {
+    const sd = data.snap_dates;
+    const list = data.up_list || [];
+    if (!sd) return list; // 旧格式直接返回
+    for (const u of list) {
+        const s = u.snap;
+        delete u.snap;
+        if (!s || !s.length) { u.snapshots = []; continue; }
+        const a = s[0], b = s[1], fans = s[2];
+        const snaps = [];
+        if (s.length > 3) {
+            const gset = new Set(s[3]);
+            for (let o = 0, k = 0; o <= b - a; o++) {
+                if (!gset.has(o)) snaps.push({ date: sd[a + o], fans: fans[k++] });
+            }
+        } else {
+            for (let o = a; o <= b; o++) snaps.push({ date: sd[o], fans: fans[o - a] });
+        }
+        u.snapshots = snaps;
+    }
+    return list;
+}
+
+// ===== 加载完成 =====
+function finishLoad(fromCache) {
+    ALL_DATA = META.up_list || [];
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.getElementById('appContainer').style.display = 'block';
+    currentBaseDate = getTodayStr();
+    document.getElementById('fltBaseDate').value = currentBaseDate;
+    document.getElementById('fltDateMode').value = currentDateMode;
+    updateViewLabel();
+    updateStats();
+    fetchData();
+    document.getElementById('dataTime').textContent =
+        '数据同步时间: ' + (META.generated_at || '-').substring(0, 16) +
+        (fromCache ? ' | 本地缓存秒开' : ' | CloudStudio 部署');
+}
+
+// ===== 加载数据: meta 探针 → IndexedDB 秒开 / 版本化全量下载 =====
+(async function initLoad() {
+    const loadMsg = document.getElementById('loadMsg');
+    const setMsg = t => { if (loadMsg) loadMsg.textContent = t; };
+    try {
+        // 1. 极小的 meta 探针（<1KB），拿到后立即渲染统计面板
+        let meta = null;
+        try {
+            const r = await fetch('meta.json?t=' + Date.now(), { cache: 'no-store' });
+            if (r.ok) meta = await r.json();
+        } catch (e) { /* 无 meta 时回退旧加载方式 */ }
+        if (meta) {
+            META = meta;
+            updateStats(); // 先渲染壳页统计卡（C）
+        }
+
+        // 2. 版本比对 → 命中 IndexedDB 缓存则零下载秒开
+        if (meta) {
+            const cached = await idbGet('data');
+            if (cached && cached.version === meta.generated_at) {
+                setMsg('正在从本地缓存恢复数据...');
+                const data = JSON.parse(cached.text);
+                data.up_list = decodeUpList(data);
+                META = data;
+                finishLoad(true); // B: 秒开
+                return;
+            }
+        }
+
+        // 3. 全量下载（URL 带版本号，浏览器可长效缓存）
+        setMsg(meta ? ('正在下载数据包 v' + (meta.generated_at || '') + '（约 30MB）...') : '正在加载UP主数据...');
+        const url = 'data.json' + (meta ? '?v=' + encodeURIComponent(meta.generated_at) : '?t=' + new Date().toISOString().split('T')[0]);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        setMsg('正在解析数据...');
+        const data = JSON.parse(text);
+        data.up_list = decodeUpList(data);
         META = data;
-        ALL_DATA = data.up_list || [];
-        document.getElementById('loadingScreen').style.display = 'none';
-        document.getElementById('appContainer').style.display = 'block';
-        currentBaseDate = getTodayStr();
-        document.getElementById('fltBaseDate').value = currentBaseDate;
-        document.getElementById('fltDateMode').value = currentDateMode;
-        updateViewLabel();
-        updateStats();
-        fetchData();
-        document.getElementById('dataTime').textContent =
-            '数据同步时间: ' + (data.generated_at || '-').substring(0, 16) + ' | CloudStudio 部署';
-    })
-    .catch(e => {
+        idbPut('data', { version: data.generated_at, text: text }); // B: 异步写入缓存
+        finishLoad(false);
+    } catch (e) {
         document.getElementById('loadingScreen').innerHTML =
             '<div style="font-size:40px;margin-bottom:12px;">❌</div>数据加载失败<br><span style="font-size:12px;opacity:0.6;">' +
             e.message + '</span>';
-    });
+    }
+})();
 
 // ===== 统计面板 =====
 function updateStats() {
